@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Next Word Predictor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Next Word Predictor</h1>
+
+        <select id="languageSelector">
+            <option value="en">🇬🇧 English</option>
+            <option value="hi">🇮🇳 Hindi</option>
+            <option value="ta">🇮🇳 Tamil</option>
+        </select>
+        <select id="modelSelector">
+    <option value="transformer">🧠 Transformer</option>
+    <option value="lstm">🔁 LSTM</option>
+    <option value="gru">🔁 GRU</option>
+</select>
+
+ 
+
+        <textarea id="inputText" rows="4" placeholder="Start typing or use voice input..."></textarea>
+
+        <div class="buttons">
+            <button id="predictBtn">Predict Next Word</button>
+            <button id="voiceBtn">🎤 Speak</button>
+            <button id="clearBtn">❌ Clear</button>
+        </div>
+
+        <div id="prediction" class="prediction-buttons"></div>
+
+        <h3>Typing History</h3>
+        <ul id="historyList"></ul>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html> 
