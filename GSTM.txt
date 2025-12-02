@@ -1,0 +1,333 @@
+GSTM 
+Transformer
+
+
+from flask import Flask, render_template, request, jsonify
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import re
+from collections import Counter
+
+app = Flask(__name__)
+
+# Load dataset from txt file
+print("Loading dataset...")
+with open("dataset.txt", "r", encoding="utf-8") as f:
+    sample_text = f.read().lower()
+print("Dataset loaded.")
+
+# Preprocessing
+sample_text = re.sub(r"[^\w\s]", "", sample_text)
+words = sample_text.split()
+print("Preprocessing done.")
+
+# Vocabulary
+word_counts = Counter(words)
+vocab = sorted(word_counts, key=word_counts.get, reverse=True)
+vocab = ["<pad>"] + vocab  # Add padding token
+word_to_ix = {word: i for i, word in enumerate(vocab)}
+ix_to_word = {i: word for word, i in word_to_ix.items()}
+vocab_size = len(vocab)
+print(f"Vocabulary created with {vocab_size} tokens.")
+
+# Ask user for training split ratio only
+try:
+    train_ratio = float(input("Enter training data ratio (e.g., 0.9 for 90% training data): "))
+    if not (0 < train_ratio < 1):
+        raise ValueError
+except ValueError:
+    print("Invalid input. Using default ratio: 0.9 (90% train, 10% test).")
+    train_ratio = 0.9
+
+test_ratio = 1.0 - train_ratio
+print(f"Using {train_ratio:.2f} for training and {test_ratio:.2f} for testing.")
+
+
+# Model
+class LSTMModel(nn.Module):
+    def __init__(self, vocab_size, embed_dim=10, hidden_dim=64):
+        super().__init__()
+        self.embed = nn.Embedding(vocab_size, embed_dim)
+        self.lstm = nn.LSTM(embed_dim, hidden_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, vocab_size)
+
+    def forward(self, x):
+        x = self.embed(x)
+        out, _ = self.lstm(x)
+        return self.fc(out[:, -1])
+
+model = LSTMModel(vocab_size)
+print("Model initialized.")
+
+# Prepare sequences
+seq_length = 4
+data = [
+    (words[i:i+seq_length], words[i+seq_length])
+    for i in range(len(words) - seq_length)
+]
+
+# Split into train and test data (9:1 ratio)
+split_index = int(len(data) * train_ratio)
+train_data = data[:split_index]
+test_data = data[split_index:]
+print(f"Data split: {len(train_data)} training, {len(test_data)} testing samples.")
+
+
+def prepare_sequence(seq, target):
+    x = torch.tensor([word_to_ix.get(w, 0) for w in seq], dtype=torch.long)
+    y = torch.tensor(word_to_ix.get(target, 0), dtype=torch.long)
+    return x, y
+
+# Training
+device = torch.device("cpu")
+model.to(device)
+loss_fn = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+print("Training started...")
+for epoch in range(20):  # Increase for better results
+    print(f"Epoch {epoch+1}")
+    for i, (seq, target) in enumerate(train_data):
+        if i % 1000 == 0:
+            print(f"  Training step {i}/{len(train_data)}")
+        x, y = prepare_sequence(seq, target)
+        x = x.to(device).unsqueeze(0)
+        y = y.to(device).unsqueeze(0)
+        optimizer.zero_grad()
+        output = model(x)
+        loss = loss_fn(output, y)
+        loss.backward()
+        optimizer.step()
+print("Training complete.")
+
+# WER function
+def word_error_rate(reference, hypothesis):
+    r = reference
+    h = hypothesis
+    d = [[0] * (len(h)+1) for _ in range(len(r)+1)]
+    for i in range(len(r)+1):
+        d[i][0] = i
+    for j in range(len(h)+1):
+        d[0][j] = j
+    for i in range(1, len(r)+1):
+        for j in range(1, len(h)+1):
+            cost = 0 if r[i-1] == h[j-1] else 1
+            d[i][j] = min(
+                d[i-1][j] + 1,     # Deletion
+                d[i][j-1] + 1,     # Insertion
+                d[i-1][j-1] + cost # Substitution
+            )
+    return d[-1][-1] / len(r)
+
+# Evaluate WER
+print("Evaluating WER on test data...")
+total_wer = 0
+for seq, target in test_data:
+    x, _ = prepare_sequence(seq, target)
+    x = x.unsqueeze(0).to(device)
+    with torch.no_grad():
+        output = model(x)
+        pred_idx = output.argmax(dim=1).item()
+        pred_word = ix_to_word[pred_idx]
+        total_wer += word_error_rate([target], [pred_word])
+avg_wer = total_wer / len(test_data)
+print(f"Average Word Error Rate (WER): {avg_wer:.4f}")
+
+# Flask routes
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    input_text = request.json.get("text", "").lower().split()
+    while len(input_text) < 4:
+        input_text.insert(0, "<pad>")
+    seq = input_text[-4:]
+    x = torch.tensor([word_to_ix.get(w, 0) for w in seq], dtype=torch.long).unsqueeze(0)
+    with torch.no_grad():
+        output = model(x)
+        probs = F.softmax(output, dim=1)
+        top_indices = torch.topk(probs, 5).indices.squeeze().tolist()
+    predictions = [ix_to_word[i] for i in top_indices]
+    return jsonify({"predictions": predictions})
+
+if __name__ == "__main__":
+    print("Starting Flask app...")
+    app.run(debug=True)
+
+
+from flask import Flask, render_template, request, jsonify
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import re
+from collections import Counter
+
+app = Flask(__name__)
+
+# Load and preprocess dataset
+print("Loading dataset...")
+with open("dataset.txt", "r", encoding="utf-8") as f:
+    sample_text = f.read().lower()
+print("Dataset loaded.")
+
+sample_text = re.sub(r"[^\w\s]", "", sample_text)
+words = sample_text.split()
+print("Preprocessing done.")
+
+# Vocabulary
+word_counts = Counter(words)
+vocab = ["<pad>"] + sorted(word_counts, key=word_counts.get, reverse=True)
+word_to_ix = {word: i for i, word in enumerate(vocab)}
+ix_to_word = {i: word for word, i in word_to_ix.items()}
+vocab_size = len(vocab)
+print(f"Vocabulary created with {vocab_size} tokens.")
+
+# Ask user for training split ratio
+try:
+    train_ratio = float(input("Enter training data ratio (e.g., 0.9 for 90% training data): "))
+    if not (0 < train_ratio < 1):
+        raise ValueError
+except ValueError:
+    print("Invalid input. Using default ratio: 0.9")
+    train_ratio = 0.9
+
+# Prepare data sequences
+seq_length = 4
+data = [(words[i:i+seq_length], words[i+seq_length]) for i in range(len(words) - seq_length)]
+
+split_idx = int(len(data) * train_ratio)
+train_data = data[:split_idx]
+test_data = data[split_idx:]
+print(f"Data split: {len(train_data)} training, {len(test_data)} testing samples.")
+
+def prepare_sequence(seq, target):
+    x = torch.tensor([word_to_ix.get(w, 0) for w in seq], dtype=torch.long)
+    y = torch.tensor(word_to_ix.get(target, 0), dtype=torch.long)
+    return x, y
+
+# Transformer model
+class TransformerModel(nn.Module):
+    def __init__(self, vocab_size, embed_dim=64, num_heads=4, hidden_dim=128, num_layers=2, max_len=10):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.positional_encoding = nn.Parameter(torch.zeros(1, max_len, embed_dim))
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dim_feedforward=hidden_dim)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.fc = nn.Linear(embed_dim, vocab_size)
+
+    def forward(self, x):
+        x = self.embedding(x) + self.positional_encoding[:, :x.size(1), :]
+        x = self.transformer(x)
+        return self.fc(x[:, -1, :])  # Output only for the last token
+
+device = torch.device("cpu")
+model = TransformerModel(vocab_size).to(device)
+print("Transformer model initialized.")
+
+# Training
+loss_fn = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+print("Training started...")
+for epoch in range(10):
+    print(f"Epoch {epoch+1}")
+    for i, (seq, target) in enumerate(train_data):
+        x, y = prepare_sequence(seq, target)
+        x = x.unsqueeze(0).to(device)
+        y = y.unsqueeze(0).to(device)
+        optimizer.zero_grad()
+        out = model(x)
+        loss = loss_fn(out, y)
+        loss.backward()
+        optimizer.step()
+        if i % 1000 == 0:
+            print(f"  Step {i}/{len(train_data)}")
+print("Training complete.")
+
+# WER
+def word_error_rate(ref, hyp):
+    d = [[0] * (len(hyp)+1) for _ in range(len(ref)+1)]
+    for i in range(len(ref)+1):
+        d[i][0] = i
+    for j in range(len(hyp)+1):
+        d[0][j] = j
+    for i in range(1, len(ref)+1):
+        for j in range(1, len(hyp)+1):
+            cost = 0 if ref[i-1] == hyp[j-1] else 1
+            d[i][j] = min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+cost)
+    return d[-1][-1] / len(ref)
+
+print("Evaluating WER...")
+total_wer = 0
+for seq, target in test_data:
+    x, _ = prepare_sequence(seq, target)
+    x = x.unsqueeze(0).to(device)
+    with torch.no_grad():
+        out = model(x)
+        pred = out.argmax(dim=1).item()
+        pred_word = ix_to_word[pred]
+        total_wer += word_error_rate([target], [pred_word])
+avg_wer = total_wer / len(test_data)
+print(f"Average WER: {avg_wer:.4f}")
+
+# Flask routes
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    input_text = request.json.get("text", "").lower().split()
+    while len(input_text) < 4:
+        input_text.insert(0, "<pad>")
+    seq = input_text[-4:]
+    x = torch.tensor([word_to_ix.get(w, 0) for w in seq], dtype=torch.long).unsqueeze(0).to(device)
+    with torch.no_grad():
+        out = model(x)
+        probs = F.softmax(out, dim=1)
+        top_idx = torch.topk(probs, 5).indices.squeeze().tolist()
+    preds = [ix_to_word[i] for i in top_idx]
+    return jsonify({"predictions": preds})
+
+if __name__ == "__main__":
+    print("Starting Flask app...")
+    app.run(debug=True)
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Next Word Predictor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Next Word Predictor</h1>
+
+        <select id="languageSelector">
+            <option value="en">🇬🇧 English</option>
+            <option value="hi">🇮🇳 Hindi</option>
+            <option value="ta">🇮🇳 Tamil</option>
+        </select>
+
+        <textarea id="inputText" rows="4" placeholder="Start typing or use voice input..."></textarea>
+
+        <div class="buttons">
+            <button id="predictBtn">Predict Next Word</button>
+            <button id="voiceBtn">🎤 Speak</button>
+            <button id="clearBtn">❌ Clear</button>
+        </div>
+
+        <div id="prediction" class="prediction-buttons"></div>
+
+        <h3>Typing History</h3>
+        <ul id="historyList"></ul>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html> 
