@@ -36,13 +36,8 @@ vocab_size = len(vocab)
 # ─────────────────────────────────────────────
 # Train/test split
 # ─────────────────────────────────────────────
-try:
-    train_ratio = float(input("Enter training data ratio (between 0 and 1): "))
-    if not (0 < train_ratio < 1):
-        raise ValueError("Ratio must be between 0 and 1.")
-except ValueError as e:
-    print(f"Invalid input: {e}")
-    exit(1)
+train_ratio = 0.8
+
 
 seq_length = 4
 data = [(words[i:i + seq_length], words[i + seq_length]) for i in range(len(words) - seq_length)]
