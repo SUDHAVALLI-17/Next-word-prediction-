@@ -347,8 +347,6 @@ def predict_word(model, seq):
     return ix_to_word[pred_idx]
 
 
-import threading
-
 # ─────────────────────────────────────────────
 # Background training
 # ─────────────────────────────────────────────
