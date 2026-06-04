@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import re
 import math
 import os
+import threading
 from collections import Counter
 import editdistance
 
@@ -346,25 +347,28 @@ def predict_word(model, seq):
     return ix_to_word[pred_idx]
 
 
-# ─────────────────────────────────────────────
-# Train all models
-# ─────────────────────────────────────────────
-print("\nTraining all models...\n")
-for name, model in models.items():
-    train_model(model, name)
+import threading
 
 # ─────────────────────────────────────────────
-# Evaluate with WER
+# Background training
 # ─────────────────────────────────────────────
-print("\nCalculating WER on test data...")
-for name, model in models.items():
-    total_wer = 0
-    for seq, actual in test_data:
-        pred = predict_word(model, seq)
-        total_wer += calculate_wer(actual, pred)
-    avg_wer = total_wer / len(test_data) if test_data else 0
-    print(f"  {name.upper()} — Avg WER: {avg_wer:.4f}")
+def train_all():
+    print("\nTraining all models...\n")
+    for name, model in models.items():
+        train_model(model, name)
 
+    print("\nCalculating WER on test data...")
+    for name, model in models.items():
+        total_wer = 0
+        for seq, actual in test_data:
+            pred = predict_word(model, seq)
+            total_wer += calculate_wer(actual, pred)
+        avg_wer = total_wer / len(test_data) if test_data else 0
+        print(f"  {name.upper()} — Avg WER: {avg_wer:.4f}")
+
+t = threading.Thread(target=train_all)
+t.daemon = True
+t.start()
 
 # ─────────────────────────────────────────────
 # Flask routes
